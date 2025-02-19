@@ -494,7 +494,11 @@ ul.menu {
 
 .contentTable {
 	margin-bottom: 9px;
+	border: none;
+	width: 100%;
+	padding: 0
 }
+
 
 .genericBoxBgLftTop {
 	background: url('/theme/anchorbox_topleft.webp') no-repeat #f4f4f4;
