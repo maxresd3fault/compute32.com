@@ -675,3 +675,12 @@ h2 {
 h2 b {
 	color: #ff0000;
 }
+
+pre {
+	white-space: pre-wrap;
+}
+
+code {
+	border: 1px solid #cdcccc;
+	border-radius: 3px;
+}
