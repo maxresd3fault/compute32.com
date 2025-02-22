@@ -61,12 +61,10 @@ code.hljs {
 .hljs-variable {
   color:#ab5656;
 }
-.hljs-literal {
-  color:#695
-}
 .hljs-addition,
 .hljs-built_in,
 .hljs-bullet,
+.hljs-attr,
 .hljs-code {
   color:#397300
 }

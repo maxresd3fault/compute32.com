@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="robots" content="index, follow">
+		<meta name="viewport" content="width=974">
+		<link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+		<link rel="stylesheet" href="/css/styles.css"/>
+		<link rel="stylesheet" href="/css/hljs.css"/>
+		<title>Compute32 - How to Make a Simple Bash Crash Monitoring Service</title>
+		<meta name="description" content="In this guide we will go over how to make a simple bash script which will restart another process which has crashed.">
+	</head>
+	<body>
+		<div id="wrapper">
+			<script id="replace_with_header" src="/js/header.js"></script>
+			<div id="wrapper-body">
+				<div id="wrapper-content">
+					<h1><span>How to Make a Simple Bash Crash Monitoring Service <p>2/21/2025</p></span></h1>
+					<table class="contentTable" cellspacing="0" cellpadding="0">
+						<tbody>
+							<tr>
+								<td width="3" class="innerBoxHeaderBgLft"></td>
+								<td nowrap="nowrap" class="innerBoxHeaderBgRpt">
+									<h2>PROJECT <b>INTRO</b></h2>
+								</td>
+								<td width="3" class="innerBoxHeaderBgRt"></td>
+							</tr>
+							<tr>
+								<td width="3" class="innerBoxSideLft"></td>
+								<td class="innerBoxContent">
+									<p>Not all too long ago I was creating a plugin for a Half-Life game server running under Debian Linux. Inevitably, my plugin was extremely buggy and would randomly crash the server after running for a few hours. Besides that... it worked fine. While I was debugging the plugin and searching for a proper solution I made a temporary one: a bash script which ran in the background and would restart the server if it crashed.</p>
+									<p>I fixed the bug in my plugin and it no longer periodically crashes the server. But, I still run this bash script just in case it were to crash for some other reason. That way my server (which is supposed to run 24/7) can still get automatically restarted, instead of sitting offline until I eventually check in on it.</p>
+									<p>Today we will go over this script and run it in the background with systemd so you can keep your service(s) online! But first, it is important to understand how the script in this guide works. Originally, when my plugin would crash my game server, the program would lock up and get pinned to 100% CPU usage. So, this script will check if the specified process exceeds 100% CPU usage for more than a set period of time, then it assumes the process is stuck and will restart it. Under normal conditions my game server would never get anywhere near 100% CPU usage, so having the script work like this is no problem and ensures it will only restart a frozen process. But, your program/service might work differently, thus it might be necessary to modify this script for your specific use case. Keep that in mind!</p>
+								</td>
+								<td width="3" class="innerBoxSideRt"></td>
+							</tr>
+							<tr>
+								<td width="3" class="innerBoxBgLftBot"></td>
+								<td nowrap="nowrap" class="genericBoxBgRptBot"></td>
+								<td width="3" class="innerBoxBgRtBot"></td>
+							</tr>
+						</tbody>
+					</table>
+					<table class="contentTable" cellspacing="0" cellpadding="0">
+						<tbody>
+							<tr>
+								<td width="3" class="innerBoxHeaderBgLft"></td>
+								<td nowrap="nowrap" class="innerBoxHeaderBgRpt">
+									<h2>THE <b>CODE</b></h2>
+								</td>
+								<td width="3" class="innerBoxHeaderBgRt"></td>
+							</tr>
+							<tr>
+								<td width="3" class="innerBoxSideLft"></td>
+								<td class="innerBoxContent">
+									<p>Here is the script I wrote below, along with some handy comments to explain what's going on. This guide assumes that the script is located at <code>$HOME/.local/bin/crash_mon.sh</code>. Don't forget to make it executable with <code>chmod +x</code>!</p>
+									<pre><code class="language-bash">#!/bin/bash
+
+# Configuration
+CHECK_INTERVAL=5  # Time in seconds between checks
+THRESHOLD=99      # CPU usage percentage to trigger restart
+DURATION=5        # Time in seconds to maintain high CPU usage
+
+# Monitoring function
+monitor_program() {
+  local start_time=0
+  while true; do
+    # Get the CPU usage of the program
+    CPU_USAGE=$(top -b -n 1 | grep hlds_li | awk '{print int($9)}')
+    # Check if CPU usage exceeds the threshold
+    if (( $(echo "$CPU_USAGE > $THRESHOLD" | bc -l) )); then
+      if (( start_time == 0 )); then
+        start_time=$(date +%s)
+      fi
+      
+      elapsed=$(( $(date +%s) - start_time ))
+      if (( elapsed >= DURATION )); then
+        echo "CPU usage is $CPU_USAGE%, restarting hlds_linux..."
+        tmux kill-ses -t dmc  # Kill tmux session
+        sleep 1               # Wait before restarting
+        ./run.sh              # Restart hlds_linux
+        start_time=0          # Reset the timer
+        sleep 1               # Wait for the program to boot
+      fi
+    else
+      start_time=0            # Reset the timer if CPU usage drops
+    fi
+    sleep "$CHECK_INTERVAL"
+  done
+}
+
+# Restart monitoring
+monitor_program</code></pre>
+									<p>Now, this script assumes a couple of things:</p>
+									<ul>
+										<li>The program name starts with "hlds_li"</li>
+										<li>That you are using tmux and the session name is "dmc"</li>
+										<li>That "run.sh" in the working directory will restart your process</li>
+										<li>The program has actually crashed if its CPU usage gets pegged for the set amount of time</li>
+									</ul>
+									<p>Before you use this script I am sure you will have to make some modifications to fit your use case. For example, if your process regularly has high CPU usage or the crashes you are experiencing do not peg the CPU, you might want to implement another method of checking for a frozen process/crash.</p>
+									<p>For those who do not know about tmux, it is a small Linux program which lets you run programs in the background, preserving them when the ssh connection gets terminated. It does essentially the same thing as the "screen" program, I just find it more stable. If you don't use tmux, you'll have to modify the script.</p>
+									<p>Alright! Now that you've modified the script for your specific process, let's get it automatically running with systemd. We want to use systemctl with the --user flag. The reason for this is because I am assuming you are running your process as a non-root user (you should be!), and we don't want it to be restarted by systemd as root. The --user flag will ensure whatever user you have set up for your process will be the one restarting it. But, this introduces a problem, systemd user services won't persist after we disconnect from ssh, and won't start at boot unless we log into said user account. We can fix this with something called "linger". Go ahead and run:</p>
+									<pre><code class="language-bash">sudo loginctl enable-linger $(whoami)</code></pre>
+									<p>This will fix both issues and allow systemd user services to start and run even when the user isn't logged in.</p>
+									<p>Now, below is the systemd service file which can be saved as <code>$HOME/.config/systemd/user/crsh_mon.service</code></p>
+									<pre><code class="language-ini">[Unit]
+Description=Start the crash monitor
+
+[Service]
+ExecStart=$HOME/.local/bin/crash_mon.sh
+WorkingDirectory=[PATH TO YOUR WORKING DIR]
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+									<p>You should probably replace $HOME with the absolute path to the script, and then of course you need to add the working directory for your process so the crash monitoring script will restart it in the correct directory. Our systemd service will start the script at boot, and even restart the script if the script itself crashes. Nice!</p>
+									<p>Finally we can enable and check the service with:</p>
+									<pre><code>systemctl --user enable crsh_mon.service
+systemctl --user start crsh_mon.service
+systemctl --user status crsh_mon.service</code></pre>
+									<p>And that's it! Provided you did modify the script to work with your process you should be up and running with some extra redundancy now.</p>
+								</td>
+								<td width="3" class="innerBoxSideRt"></td>
+							</tr>
+							<tr>
+								<td width="3" class="innerBoxBgLftBot"></td>
+								<td nowrap="nowrap" class="genericBoxBgRptBot"></td>
+								<td width="3" class="innerBoxBgRtBot"></td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+				<script id="replace_with_sidebar" src="/js/sidebar.js"></script>
+			</div>
+			<script id="replace_with_footer" src="/js/footer.js"></script>
+			<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+			<script>hljs.highlightAll();</script>
+		</div>
+	</body>
+</html>
